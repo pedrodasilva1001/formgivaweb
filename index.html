@@ -420,8 +420,13 @@
           <span class="dot"></span>
           <span id="activeModeLabel">Aguardando imagem ou página</span>
         </div>
-        <div style="font-size:11.5px; color:var(--text-muted);">
-          Dica: Você pode colar um print direto com <strong>Ctrl + V</strong> ou arrastar uma seleção para mover!
+        <div style="display:flex; align-items:center; gap:12px;">
+          <span style="font-size:11.5px; color:var(--text-muted);">
+            Dica: Cole com <strong>Ctrl + V</strong> ou arraste uma seleção para mover!
+          </span>
+          <button class="plus-tools-btn" id="btnTogglePlusTools" title="Abrir ferramentas específicas e sobreposição">
+            +tools
+          </button>
         </div>
       </div>
 
@@ -464,6 +469,116 @@
         </div>
       </div>
     </main>
+
+    <!-- RIGHT COLLAPSIBLE SPECIFIC TOOLS COLUMN (+tools) -->
+    <aside class="right-tools-drawer collapsed" id="rightToolsDrawer">
+      <div class="drawer-header">
+        <div class="drawer-header-title">
+          <span>⚡ +tools • Ferramentas Específicas</span>
+        </div>
+        <button class="drawer-close-btn" id="btnCloseRightDrawer" title="Fechar +tools">✕</button>
+      </div>
+
+      <!-- 1. SOBREPOR (OVERLAY / PASTE OVER) -->
+      <div class="panel-section">
+        <div class="panel-title">
+          <span>Sobrepor Recorte / Seleção</span>
+          <span class="brand-badge">Overlay</span>
+        </div>
+
+        <div class="helper-hint">
+          Selecione ou corte qualquer pedaço da foto e clique em <strong>Sobrepor</strong> para jogá-lo por cima de qualquer outro item!
+        </div>
+
+        <div class="action-stack">
+          <button class="btn btn-primary btn-block" id="btnRightOverlaySelection">
+            📌 Sobrepor Seleção / Recorte
+          </button>
+
+          <button class="btn btn-block" id="btnRightFitOverlayIntoSelection" title="Se você já cortou/selecionou algo antes, selecione o local de destino e clique aqui para encaixar por cima">
+            📥 Encaixar Recorte na Seleção Atual
+          </button>
+
+          <button class="btn btn-block" id="btnRightToggleStampMode" title="Quando ativo, cada clique na foto cola uma cópia do seu recorte por cima">
+            🎯 Carimbar: Clicar na Foto p/ Sobrepor (Off)
+          </button>
+
+          <div class="prop-grid" style="margin-top:2px;">
+            <button class="btn" id="btnRightBringFront" title="Colocar esta camada na frente de todas">
+              🔼 Trazer p/ Frente
+            </button>
+            <button class="btn" id="btnRightSendBack" title="Enviar esta camada para trás">
+              🔽 Enviar p/ Trás
+            </button>
+          </div>
+
+          <button class="btn btn-success btn-block" id="btnRightStampOverlay" title="Funde a camada sobreposta definitivamente na imagem">
+            ✅ Fixar Sobreposição no Print
+          </button>
+        </div>
+
+        <div class="prop-field" style="margin-top:12px;">
+          <label>Opacidade da Sobreposição (<span id="lblOverlayOpacity">100%</span>)</label>
+          <input type="range" id="rightOverlayOpacity" min="10" max="100" value="100" style="width:100%; accent-color:#6366f1;" />
+        </div>
+      </div>
+
+      <!-- 2. AJUSTE FINO (1PX) & TRANSFORMAÇÃO DA SOBREPOSIÇÃO -->
+      <div class="panel-section">
+        <div class="panel-title">Ajuste Fino (1px) & Dimensões</div>
+        <div class="nudge-grid" style="margin-bottom:10px;">
+          <button class="btn" id="btnNudgeLeft" title="Mover 1px para esquerda">⬅️ 1px</button>
+          <button class="btn" id="btnNudgeUp" title="Mover 1px para cima">⬆️ 1px</button>
+          <button class="btn" id="btnNudgeDown" title="Mover 1px para baixo">⬇️ 1px</button>
+          <button class="btn" id="btnNudgeRight" title="Mover 1px para direita">➡️ 1px</button>
+        </div>
+
+        <div class="prop-grid" style="margin-bottom:10px;">
+          <div class="prop-field">
+            <label>Largura Camada (px)</label>
+            <input type="number" id="rightLayerWidth" value="0" min="8" />
+          </div>
+          <div class="prop-field">
+            <label>Altura Camada (px)</label>
+            <input type="number" id="rightLayerHeight" value="0" min="8" />
+          </div>
+        </div>
+
+        <div class="prop-grid">
+          <button class="btn" id="btnFlipH">↔️ Espelhar H</button>
+          <button class="btn" id="btnFlipV">↕️ Espelhar V</button>
+        </div>
+      </div>
+
+      <!-- 3. EFEITOS & RETOQUE ESPECÍFICO NA SELEÇÃO -->
+      <div class="panel-section">
+        <div class="panel-title">Efeitos & Retoque na Seleção</div>
+        <div class="action-stack">
+          <button class="btn btn-block" id="btnRightPixelateSelection">
+            🌫️ Borrar / Pixelizar Seleção (Ocultar Dados)
+          </button>
+          <button class="btn btn-block" id="btnRightBorderSelection">
+            ▭ Criar Borda de Destaque na Seleção
+          </button>
+          <button class="btn btn-block" id="btnRightInvertSelection">
+            🌗 Inverter Cores da Seleção
+          </button>
+        </div>
+      </div>
+
+      <!-- 4. LISTA DE CAMADAS SOBREPOSTAS -->
+      <div class="panel-section">
+        <div class="panel-title">
+          <span>Camadas Sobrepostas</span>
+          <span class="brand-badge" id="rightLayersCount">0</span>
+        </div>
+        <div class="layer-list-box" id="rightLayersList">
+          <div style="font-size:11.5px; color:var(--text-dim); text-align:center; padding:8px;">
+            Nenhuma camada sobreposta ativa.
+          </div>
+        </div>
+      </div>
+    </aside>
 
   </div>
 

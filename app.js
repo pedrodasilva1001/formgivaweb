@@ -693,6 +693,208 @@ class FormgivaStudioApp {
         el.textContent = val;
       });
     });
+
+    // --- RIGHT COLUMN (+tools): SOBREPOR & FERRAMENTAS ESPECÍFICAS ---
+    this.bindRightPlusToolsActions();
+  }
+
+  bindRightPlusToolsActions() {
+    const rightDrawer = document.getElementById('rightToolsDrawer');
+    const btnPlusTools = document.getElementById('btnTogglePlusTools');
+    const btnCloseRight = document.getElementById('btnCloseRightDrawer');
+
+    if (btnPlusTools && rightDrawer) {
+      btnPlusTools.addEventListener('click', () => {
+        const isClosed = rightDrawer.classList.toggle('collapsed');
+        btnPlusTools.classList.toggle('active', !isClosed);
+        if (!isClosed) {
+          this.updateRightLayersList();
+        }
+      });
+    }
+
+    if (btnCloseRight && rightDrawer) {
+      btnCloseRight.addEventListener('click', () => {
+        rightDrawer.classList.add('collapsed');
+        if (btnPlusTools) btnPlusTools.classList.remove('active');
+      });
+    }
+
+    // 1. Botão Principal: Sobrepor Seleção / Recorte
+    document.getElementById('btnRightOverlaySelection').addEventListener('click', () => {
+      if (this.mode !== 'image') {
+        this.showToast('Abra um Print/Foto para sobrepor um recorte.');
+        return;
+      }
+      const layer = this.imageEditor.overlayCurrentOrLastSelection();
+      if (layer) {
+        this.updateRightLayersList();
+        this.showToast('Recorte sobreposto por cima! Arraste-o para onde quiser cobrir.');
+      } else {
+        this.showToast('Selecione ou corte um pedaço da imagem primeiro para poder sobrepor.');
+      }
+    });
+
+    // 2. Encaixar Recorte na Seleção Atual
+    document.getElementById('btnRightFitOverlayIntoSelection').addEventListener('click', () => {
+      if (this.mode !== 'image') return;
+      const layer = this.imageEditor.fitClipboardOverlayIntoSelection();
+      if (layer) {
+        this.updateRightLayersList();
+        this.showToast('Recorte encaixado e sobreposto exatamente na seleção!');
+      } else {
+        this.showToast('Primeiro selecione/corte o item de origem, depois selecione o local de destino e clique aqui.');
+      }
+    });
+
+    // 3. Modo Carimbo (Clicar na Foto p/ Sobrepor)
+    const btnStampMode = document.getElementById('btnRightToggleStampMode');
+    btnStampMode.addEventListener('click', () => {
+      if (this.mode !== 'image') return;
+      if (!this.imageEditor.clipboardPiece && this.imageEditor.selectionRect) {
+        this.imageEditor.captureSelectionToClipboard();
+        this.imageEditor.clearSelection();
+      }
+      if (!this.imageEditor.clipboardPiece) {
+        this.showToast('Selecione ou corte uma área primeiro para usar como carimbo de sobreposição!');
+        return;
+      }
+      this.imageEditor.stampOverlayMode = !this.imageEditor.stampOverlayMode;
+      if (this.imageEditor.stampOverlayMode) {
+        btnStampMode.classList.add('btn-primary');
+        btnStampMode.textContent = '🎯 Carimbar: ATIVO (Clique na foto p/ Sobrepor)';
+        this.showToast('Modo Carimbo ativo! Clique em qualquer lugar do print para sobrepor o recorte.');
+      } else {
+        btnStampMode.classList.remove('btn-primary');
+        btnStampMode.textContent = '🎯 Carimbar: Clicar na Foto p/ Sobrepor (Off)';
+        this.showToast('Modo Carimbo desativado.');
+      }
+    });
+
+    // 4. Trazer p/ Frente & Enviar p/ Trás & Fixar Sobreposição
+    document.getElementById('btnRightBringFront').addEventListener('click', () => {
+      if (this.mode === 'image' && this.imageEditor.bringLayerToFront()) {
+        this.updateRightLayersList();
+        this.showToast('Camada trazida para frente de todas!');
+      }
+    });
+
+    document.getElementById('btnRightSendBack').addEventListener('click', () => {
+      if (this.mode === 'image' && this.imageEditor.sendLayerToBack()) {
+        this.updateRightLayersList();
+        this.showToast('Camada enviada para trás!');
+      }
+    });
+
+    document.getElementById('btnRightStampOverlay').addEventListener('click', () => {
+      if (this.mode === 'image' && this.imageEditor.stampSelectedLayer()) {
+        this.updateRightLayersList();
+        this.showToast('Sobreposição fixada definitivamente no print!');
+      } else {
+        this.showToast('Selecione uma camada sobreposta primeiro para fixá-la.');
+      }
+    });
+
+    // 5. Opacidade da Sobreposição
+    const opacitySlider = document.getElementById('rightOverlayOpacity');
+    const lblOpacity = document.getElementById('lblOverlayOpacity');
+    opacitySlider.addEventListener('input', () => {
+      const val = parseInt(opacitySlider.value, 10);
+      lblOpacity.textContent = `${val}%`;
+      if (this.mode === 'image') {
+        this.imageEditor.setLayerOpacity(val);
+      }
+    });
+
+    // 6. Ajuste Fino 1px (Nudge), Dimensões e Espelhar
+    document.getElementById('btnNudgeLeft').addEventListener('click', () => this.imageEditor.nudgeSelectedLayer(-1, 0));
+    document.getElementById('btnNudgeRight').addEventListener('click', () => this.imageEditor.nudgeSelectedLayer(1, 0));
+    document.getElementById('btnNudgeUp').addEventListener('click', () => this.imageEditor.nudgeSelectedLayer(0, -1));
+    document.getElementById('btnNudgeDown').addEventListener('click', () => this.imageEditor.nudgeSelectedLayer(0, 1));
+
+    const inpW = document.getElementById('rightLayerWidth');
+    const inpH = document.getElementById('rightLayerHeight');
+    const updateLayerDims = () => {
+      if (this.mode === 'image' && this.imageEditor.selectedLayer && this.imageEditor.selectedLayer.type === 'image') {
+        this.imageEditor.selectedLayer.w = Math.max(8, parseInt(inpW.value || '20', 10));
+        this.imageEditor.selectedLayer.h = Math.max(8, parseInt(inpH.value || '20', 10));
+        this.imageEditor.syncLayerPosition(this.imageEditor.selectedLayer);
+      }
+    };
+    inpW.addEventListener('input', updateLayerDims);
+    inpH.addEventListener('input', updateLayerDims);
+
+    document.getElementById('btnFlipH').addEventListener('click', () => {
+      if (this.mode === 'image' && this.imageEditor.flipSelectedLayer('h')) {
+        this.showToast('Camada espelhada horizontalmente!');
+      }
+    });
+
+    document.getElementById('btnFlipV').addEventListener('click', () => {
+      if (this.mode === 'image' && this.imageEditor.flipSelectedLayer('v')) {
+        this.showToast('Camada espelhada verticalmente!');
+      }
+    });
+
+    // 7. Efeitos & Retoque na Seleção
+    document.getElementById('btnRightPixelateSelection').addEventListener('click', () => {
+      if (this.mode === 'image' && this.imageEditor.pixelateSelection(10)) {
+        this.showToast('Seleção borrada/pixelizada!');
+      } else {
+        this.showToast('Selecione uma área na imagem primeiro.');
+      }
+    });
+
+    document.getElementById('btnRightBorderSelection').addEventListener('click', () => {
+      const color = document.getElementById('propTextColor').value || '#6366f1';
+      if (this.mode === 'image' && this.imageEditor.drawBorderOnSelection(color, 3)) {
+        this.showToast('Borda de destaque aplicada na seleção!');
+      } else {
+        this.showToast('Selecione uma área na imagem primeiro.');
+      }
+    });
+
+    document.getElementById('btnRightInvertSelection').addEventListener('click', () => {
+      if (this.mode === 'image' && this.imageEditor.invertSelectionColors()) {
+        this.showToast('Cores da seleção invertidas!');
+      } else {
+        this.showToast('Selecione uma área na imagem primeiro.');
+      }
+    });
+  }
+
+  updateRightLayersList() {
+    const listBox = document.getElementById('rightLayersList');
+    const countBadge = document.getElementById('rightLayersCount');
+    if (!listBox || !countBadge) return;
+
+    const layers = this.imageEditor.layers;
+    countBadge.textContent = String(layers.length);
+
+    if (layers.length === 0) {
+      listBox.innerHTML = `<div style="font-size:11.5px; color:var(--text-dim); text-align:center; padding:8px;">Nenhuma camada sobreposta ativa.</div>`;
+      return;
+    }
+
+    listBox.innerHTML = '';
+    layers.slice().reverse().forEach((layer, idx) => {
+      const item = document.createElement('div');
+      const isSel = this.imageEditor.selectedLayer === layer;
+      item.className = 'layer-list-item' + (isSel ? ' active' : '');
+      const label = layer.type === 'text'
+        ? `✏️ Texto: "${(layer.textDiv.innerText || '').slice(0, 14)}"`
+        : `🖼️ Recorte #${layers.length - idx} (${Math.round(layer.w)}×${Math.round(layer.h)})`;
+
+      item.innerHTML = `
+        <span>${label}</span>
+        <span style="font-size:10.5px; color:var(--text-muted);">Selecionar</span>
+      `;
+      item.addEventListener('click', () => {
+        this.imageEditor.selectLayer(layer);
+        this.updateRightLayersList();
+      });
+      listBox.appendChild(item);
+    });
   }
 
   applyStyleToActiveTarget(prop, value) {
@@ -808,10 +1010,22 @@ class FormgivaStudioApp {
     if (layer) {
       document.getElementById('propMoveX').value = Math.round(layer.x || 0);
       document.getElementById('propMoveY').value = Math.round(layer.y || 0);
+      const inpW = document.getElementById('rightLayerWidth');
+      const inpH = document.getElementById('rightLayerHeight');
+      if (inpW && layer.w) inpW.value = Math.round(layer.w);
+      if (inpH && layer.h) inpH.value = Math.round(layer.h);
+      const opSlider = document.getElementById('rightOverlayOpacity');
+      const lblOp = document.getElementById('lblOverlayOpacity');
+      if (opSlider && lblOp) {
+        const pct = Math.round((layer.opacity !== undefined ? layer.opacity : 1) * 100);
+        opSlider.value = pct;
+        lblOp.textContent = `${pct}%`;
+      }
       if (layer.type === 'text' && layer.textDiv) {
         document.getElementById('propTextContent').value = layer.textDiv.innerText || '';
       }
     }
+    this.updateRightLayersList();
     if (fontInfo) {
       document.getElementById('propTextColor').value = fontInfo.color || '#111827';
       document.getElementById('propTextColorHex').value = fontInfo.color || '#111827';

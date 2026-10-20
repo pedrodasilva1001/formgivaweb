@@ -2,10 +2,11 @@
  * FormgivaWeb - Photo & Screenshot Visual Editor Engine
  * Supports:
  *  - Rectangular Marquee Selection
- *  - Direct Drag-to-Move on any active selection (automatically lifts selection into a floating layer & fills background!)
- *  - Move Mode: 'cut' (fills original spot with background color) or 'clone' (keeps original spot intact)
+ *  - Direct Drag-to-Move on any active selection
+ *  - Overlay (Sobrepor) System: Overlay current selection/cut piece, Stamp-on-Click mode, Fit-into-Selection, Z-index Bring to Front / Send to Back, Opacity
+ *  - Specific Retouch Tools (+tools): Blur, Pixelate, Border Highlight, Invert, Flip, 1px Nudge
  *  - Smart Erase / Delete (edge-aware background fill)
- *  - Replace Text in Photo (erases old text & creates editable text layer with matched font/color/size)
+ *  - Replace Text in Photo
  *  - Eyedropper pixel color picker
  *  - Full Canvas Crop, Layer Duplicate, Undo / Redo & Flatten to PNG
  */
@@ -26,6 +27,10 @@ class ImageEditorEngine {
     this.isSelecting = false;
     this.startPt = { x: 0, y: 0 };
 
+    // Clipboard memory for the last selected or cut region (for Sobrepor / Overlay)
+    this.clipboardPiece = null; // { dataUrl, w, h, x, y }
+    this.stampOverlayMode = false; // When true, clicking on canvas stamps/overlays clipboardPiece
+
     // Active drag state when lifting & dragging a selection directly
     this.activeDragLayer = null;
     this.dragLayerStartClient = { x: 0, y: 0 };
@@ -36,6 +41,7 @@ class ImageEditorEngine {
 
     this.layers = [];
     this.selectedLayer = null;
+    this.topZIndex = 40;
 
     this.history = [];
     this.historyIndex = -1;
@@ -77,6 +83,31 @@ class ImageEditorEngine {
     this.canvas.style.cursor = 'copy';
   }
 
+  /**
+   * Captures the currently selected rectangle into this.clipboardPiece so it can be overlaid anytime
+   */
+  captureSelectionToClipboard() {
+    if (!this.selectionRect || this.selectionRect.w < 4 || this.selectionRect.h < 4) return null;
+    const x = Math.max(0, Math.round(this.selectionRect.x));
+    const y = Math.max(0, Math.round(this.selectionRect.y));
+    const w = Math.min(this.canvas.width - x, Math.max(4, Math.round(this.selectionRect.w)));
+    const h = Math.min(this.canvas.height - y, Math.max(4, Math.round(this.selectionRect.h)));
+
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = w;
+    tempCanvas.height = h;
+    tempCanvas.getContext('2d').drawImage(this.canvas, x, y, w, h, 0, 0, w, h);
+
+    this.clipboardPiece = {
+      dataUrl: tempCanvas.toDataURL('image/png'),
+      w,
+      h,
+      x,
+      y
+    };
+    return this.clipboardPiece;
+  }
+
   initEvents() {
     // 1. Direct dragging on the selection marquee lifts the selection into a movable layer immediately!
     this.marquee.addEventListener('mousedown', (e) => {
@@ -84,7 +115,6 @@ class ImageEditorEngine {
       e.stopPropagation();
       e.preventDefault();
 
-      // Convert selection into a floating layer and begin dragging it immediately
       const newLayer = this.cutSelectionToLayer(this.moveBehavior === 'clone');
       if (newLayer) {
         this.activeDragLayer = newLayer;
@@ -93,7 +123,7 @@ class ImageEditorEngine {
       }
     });
 
-    // 2. Canvas mousedown for drawing a new selection (or Eyedropper)
+    // 2. Canvas mousedown
     this.canvas.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
 
@@ -109,7 +139,17 @@ class ImageEditorEngine {
         return;
       }
 
-      // If clicking inside an existing selection while in 'move' or 'select' tool, lift & drag it!
+      // Check if Stamp Overlay Mode is active (click to overlay clipboard piece!)
+      if (this.stampOverlayMode && this.clipboardPiece) {
+        const piece = this.clipboardPiece;
+        const targetX = Math.round(pt.x - piece.w / 2);
+        const targetY = Math.round(pt.y - piece.h / 2);
+        const layer = this.createFloatingImageLayer(piece.dataUrl, targetX, targetY, piece.w, piece.h);
+        this.bringLayerToFront(layer);
+        return;
+      }
+
+      // If clicking inside an existing selection, lift & drag it!
       if (
         this.selectionRect &&
         pt.x >= this.selectionRect.x &&
@@ -134,7 +174,6 @@ class ImageEditorEngine {
     });
 
     window.addEventListener('mousemove', (e) => {
-      // Handle immediate drag of a just-lifted selection layer
       if (this.activeDragLayer) {
         const rect = this.canvas.getBoundingClientRect();
         const scaleX = this.canvas.width / Math.max(1, rect.width);
@@ -176,13 +215,15 @@ class ImageEditorEngine {
         return;
       }
 
+      // Automatically store the selected region in clipboardPiece so "Sobrepor" always has it ready!
+      this.captureSelectionToClipboard();
+
       // Analyze region for colors and font metrics
       const analysis = this.fontDetector.analyzeCanvasRegion(this.canvas, this.selectionRect);
       if (this.onSelect) {
         this.onSelect(null, analysis);
       }
 
-      // Instant tool behaviors on selection release
       if (this.currentTool === 'delete') {
         this.smartEraseSelection();
       }
@@ -216,8 +257,174 @@ class ImageEditorEngine {
   }
 
   /**
-   * Smart Erase: Fills the selected rectangle on the base canvas with its detected perimeter background color
+   * SOBREPOR (Overlay Selection / Cut Piece):
+   * Takes the active selection (or the last cut/selected piece in clipboardPiece)
+   * and creates a floating overlay layer at the very top (highest z-index) so it covers anything underneath!
    */
+  overlayCurrentOrLastSelection() {
+    if (this.selectionRect && this.selectionRect.w >= 6 && this.selectionRect.h >= 6) {
+      this.captureSelectionToClipboard();
+      this.clearSelection();
+    }
+
+    if (!this.clipboardPiece && this.selectedLayer && this.selectedLayer.type === 'image') {
+      this.clipboardPiece = {
+        dataUrl: this.selectedLayer.dataUrl,
+        w: this.selectedLayer.w,
+        h: this.selectedLayer.h,
+        x: this.selectedLayer.x,
+        y: this.selectedLayer.y
+      };
+    }
+
+    if (!this.clipboardPiece) return null;
+
+    const p = this.clipboardPiece;
+    const layer = this.createFloatingImageLayer(p.dataUrl, p.x + 14, p.y + 14, p.w, p.h);
+    this.bringLayerToFront(layer);
+    return layer;
+  }
+
+  /**
+   * SOBREPOR DENTRO DA SELEÇÃO (Fit Clipboard Overlay into Current Selection Box):
+   * Places the previously copied/cut piece directly over the newly selected box, matching its width & height!
+   */
+  fitClipboardOverlayIntoSelection() {
+    if (!this.clipboardPiece || !this.selectionRect || this.selectionRect.w < 6) return null;
+    const { x, y, w, h } = this.selectionRect;
+    const p = this.clipboardPiece;
+    this.clearSelection();
+    const layer = this.createFloatingImageLayer(p.dataUrl, Math.round(x), Math.round(y), Math.round(w), Math.round(h));
+    this.bringLayerToFront(layer);
+    return layer;
+  }
+
+  bringLayerToFront(layer = this.selectedLayer) {
+    if (!layer) return false;
+    this.topZIndex++;
+    layer.zIndex = this.topZIndex;
+    layer.el.style.zIndex = String(this.topZIndex);
+    // Move to end of layers array so it renders on top when exporting PNG too!
+    this.layers = this.layers.filter(l => l !== layer);
+    this.layers.push(layer);
+    return true;
+  }
+
+  sendLayerToBack(layer = this.selectedLayer) {
+    if (!layer) return false;
+    layer.zIndex = 25;
+    layer.el.style.zIndex = '25';
+    this.layers = this.layers.filter(l => l !== layer);
+    this.layers.unshift(layer);
+    return true;
+  }
+
+  setLayerOpacity(opacityPct) {
+    if (!this.selectedLayer) return false;
+    const val = Math.max(0.05, Math.min(1, opacityPct / 100));
+    this.selectedLayer.opacity = val;
+    this.selectedLayer.el.style.opacity = String(val);
+    return true;
+  }
+
+  nudgeSelectedLayer(dx, dy) {
+    if (!this.selectedLayer) return false;
+    this.selectedLayer.x = Math.round(this.selectedLayer.x + dx);
+    this.selectedLayer.y = Math.round(this.selectedLayer.y + dy);
+    this.syncLayerPosition(this.selectedLayer);
+    if (this.onSelect) this.onSelect(this.selectedLayer, this.selectedLayer.style || null);
+    return true;
+  }
+
+  flipSelectedLayer(axis = 'h') {
+    if (!this.selectedLayer || this.selectedLayer.type !== 'image') return false;
+    const layer = this.selectedLayer;
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = layer.w;
+    tempCanvas.height = layer.h;
+    const tCtx = tempCanvas.getContext('2d');
+    tCtx.save();
+    if (axis === 'h') {
+      tCtx.translate(layer.w, 0);
+      tCtx.scale(-1, 1);
+    } else {
+      tCtx.translate(0, layer.h);
+      tCtx.scale(1, -1);
+    }
+    tCtx.drawImage(layer.img, 0, 0, layer.w, layer.h);
+    tCtx.restore();
+
+    const newDataUrl = tempCanvas.toDataURL('image/png');
+    layer.dataUrl = newDataUrl;
+    layer.img.src = newDataUrl;
+    return true;
+  }
+
+  /**
+   * Specific Retouch Tool: Blur / Pixelate selected region on base canvas
+   */
+  pixelateSelection(blockSize = 10) {
+    if (!this.selectionRect || this.selectionRect.w < 6) return false;
+    const x = Math.round(this.selectionRect.x);
+    const y = Math.round(this.selectionRect.y);
+    const w = Math.round(this.selectionRect.w);
+    const h = Math.round(this.selectionRect.h);
+
+    const imgData = this.ctx.getImageData(x, y, w, h);
+    const d = imgData.data;
+
+    for (let py = 0; py < h; py += blockSize) {
+      for (let px = 0; px < w; px += blockSize) {
+        const i = (py * w + px) * 4;
+        const r = d[i], g = d[i + 1], b = d[i + 2];
+        this.ctx.fillStyle = `rgb(${r},${g},${b})`;
+        this.ctx.fillRect(x + px, y + py, Math.min(blockSize, w - px), Math.min(blockSize, h - py));
+      }
+    }
+    this.clearSelection();
+    this.saveSnapshot('Pixelizar / Borrar seleção');
+    return true;
+  }
+
+  /**
+   * Specific Retouch Tool: Draw Highlight Border Box around current selection
+   */
+  drawBorderOnSelection(colorHex = '#6366f1', lineWidth = 3) {
+    if (!this.selectionRect || this.selectionRect.w < 6) return false;
+    const { x, y, w, h } = this.selectionRect;
+    this.ctx.save();
+    this.ctx.strokeStyle = colorHex;
+    this.ctx.lineWidth = lineWidth;
+    this.ctx.strokeRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
+    this.ctx.restore();
+    this.clearSelection();
+    this.saveSnapshot('Destacar borda na seleção');
+    return true;
+  }
+
+  /**
+   * Specific Retouch Tool: Invert colors in current selection
+   */
+  invertSelectionColors() {
+    if (!this.selectionRect || this.selectionRect.w < 6) return false;
+    const x = Math.round(this.selectionRect.x);
+    const y = Math.round(this.selectionRect.y);
+    const w = Math.round(this.selectionRect.w);
+    const h = Math.round(this.selectionRect.h);
+
+    const imgData = this.ctx.getImageData(x, y, w, h);
+    const d = imgData.data;
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = 255 - d[i];
+      d[i + 1] = 255 - d[i + 1];
+      d[i + 2] = 255 - d[i + 2];
+    }
+    this.ctx.putImageData(imgData, x, y);
+    this.clearSelection();
+    this.saveSnapshot('Inverter cores da seleção');
+    return true;
+  }
+
   smartEraseSelection(keepSelection = false, customFillHex = null) {
     if (!this.selectionRect || this.selectionRect.w < 4) return null;
     const analysis = this.fontDetector.analyzeCanvasRegion(this.canvas, this.selectionRect);
@@ -233,12 +440,9 @@ class ImageEditorEngine {
     return analysis;
   }
 
-  /**
-   * Cut (or Clone) Selection to Movable Layer:
-   * Copies pixels from selection into a draggable DOM layer, and optionally fills the background behind it.
-   */
   cutSelectionToLayer(cloneOnly = false) {
     if (!this.selectionRect || this.selectionRect.w < 6) return null;
+    this.captureSelectionToClipboard();
     const analysis = this.fontDetector.analyzeCanvasRegion(this.canvas, this.selectionRect);
     const { x, y, w, h } = analysis.rect;
 
@@ -259,10 +463,6 @@ class ImageEditorEngine {
     return layer;
   }
 
-  /**
-   * Replace Text in Photo:
-   * Smart-erases the old text in the selection and places an editable text layer in the exact same spot
-   */
   replaceTextInSelection(customText, styleOverrides = {}) {
     if (!this.selectionRect || this.selectionRect.w < 6) {
       const s = { ...this.fontDetector.clonedStyle, ...styleOverrides };
@@ -290,9 +490,6 @@ class ImageEditorEngine {
     return this.createFloatingTextLayer(textToUse, analysis.rect.x, analysis.rect.y, mergedStyle);
   }
 
-  /**
-   * Full Canvas Crop to selection
-   */
   cropCanvasToSelection() {
     if (!this.selectionRect || this.selectionRect.w < 16 || this.selectionRect.h < 16) return false;
     const x = Math.round(this.selectionRect.x);
@@ -321,8 +518,11 @@ class ImageEditorEngine {
   }
 
   createFloatingImageLayer(dataUrl, x, y, w, h) {
+    this.topZIndex++;
     const el = document.createElement('div');
     el.className = 'floating-layer selected';
+    el.style.zIndex = String(this.topZIndex);
+
     const img = document.createElement('img');
     img.src = dataUrl;
     img.style.width = '100%';
@@ -344,7 +544,9 @@ class ImageEditorEngine {
       x,
       y,
       w,
-      h
+      h,
+      opacity: 1,
+      zIndex: this.topZIndex
     };
 
     this.overlay.appendChild(el);
@@ -356,8 +558,10 @@ class ImageEditorEngine {
   }
 
   createFloatingTextLayer(text, x, y, styleObj) {
+    this.topZIndex++;
     const el = document.createElement('div');
     el.className = 'floating-layer selected';
+    el.style.zIndex = String(this.topZIndex);
 
     const textDiv = document.createElement('div');
     textDiv.className = 'floating-layer-text';
@@ -381,6 +585,8 @@ class ImageEditorEngine {
       y,
       w: null,
       h: null,
+      opacity: 1,
+      zIndex: this.topZIndex,
       style: { ...styleObj }
     };
 
@@ -392,7 +598,6 @@ class ImageEditorEngine {
 
     setTimeout(() => {
       textDiv.focus();
-      // Select all text on creation so user can type immediately
       const range = document.createRange();
       range.selectNodeContents(textDiv);
       const sel = window.getSelection();
@@ -419,12 +624,12 @@ class ImageEditorEngine {
     return null;
   }
 
-  /**
-   * Stamp / Merge the currently selected floating layer permanently onto the base canvas
-   */
   stampSelectedLayer() {
     if (!this.selectedLayer) return false;
     const layer = this.selectedLayer;
+    this.ctx.save();
+    this.ctx.globalAlpha = layer.opacity !== undefined ? layer.opacity : 1;
+
     if (layer.type === 'image' && layer.img) {
       this.ctx.drawImage(layer.img, layer.x, layer.y, layer.w, layer.h);
     } else if (layer.type === 'text' && layer.textDiv) {
@@ -432,7 +637,6 @@ class ImageEditorEngine {
       const fontSizePx = parseFloat(s.fontSize || '18');
       const fontWeight = s.fontWeight || '600';
       const fontFamily = s.fontFamily || 'Inter, sans-serif';
-      this.ctx.save();
       this.ctx.font = `${fontWeight} ${fontSizePx}px ${fontFamily}`;
       this.ctx.fillStyle = layer.textDiv.style.color || s.color || '#111827';
       this.ctx.textBaseline = 'top';
@@ -440,13 +644,14 @@ class ImageEditorEngine {
       lines.forEach((line, idx) => {
         this.ctx.fillText(line, layer.x + 3, layer.y + 1 + idx * (fontSizePx * 1.2));
       });
-      this.ctx.restore();
     }
+    this.ctx.restore();
 
     layer.el.remove();
     this.layers = this.layers.filter(item => item !== layer);
     this.selectedLayer = null;
-    this.saveSnapshot('Fixar camada na imagem');
+    this.saveSnapshot('Fixar sobreposição na imagem');
+    if (this.onSelect) this.onSelect(null, null);
     return true;
   }
 
@@ -549,6 +754,7 @@ class ImageEditorEngine {
       this.selectedLayer.el.remove();
       this.layers = this.layers.filter(l => l !== this.selectedLayer);
       this.selectedLayer = null;
+      if (this.onSelect) this.onSelect(null, null);
       return true;
     }
     if (this.selectionRect) {
@@ -614,6 +820,8 @@ class ImageEditorEngine {
     outCtx.drawImage(this.canvas, 0, 0);
 
     this.layers.forEach(layer => {
+      outCtx.save();
+      outCtx.globalAlpha = layer.opacity !== undefined ? layer.opacity : 1;
       if (layer.type === 'image' && layer.img) {
         outCtx.drawImage(layer.img, layer.x, layer.y, layer.w, layer.h);
       } else if (layer.type === 'text' && layer.textDiv) {
@@ -621,7 +829,6 @@ class ImageEditorEngine {
         const fontSizePx = parseFloat(s.fontSize || '18');
         const fontWeight = s.fontWeight || '600';
         const fontFamily = s.fontFamily || 'Inter, sans-serif';
-        outCtx.save();
         outCtx.font = `${fontWeight} ${fontSizePx}px ${fontFamily}`;
         outCtx.fillStyle = layer.textDiv.style.color || s.color || '#111827';
         outCtx.textBaseline = 'top';
@@ -630,8 +837,8 @@ class ImageEditorEngine {
         lines.forEach((line, idx) => {
           outCtx.fillText(line, layer.x + 3, layer.y + 1 + idx * (fontSizePx * 1.2));
         });
-        outCtx.restore();
       }
+      outCtx.restore();
     });
 
     return outCanvas.toDataURL('image/png');
